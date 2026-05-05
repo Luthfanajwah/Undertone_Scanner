@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Undertone Scanner</title>
+  <!-- Tailwind + Plugins -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <script id="tailwind-config">
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: "#0058bc",
+            "primary-container": "#0070eb",
+            "on-primary": "#ffffff",
+            "surface": "#fcf8fb",
+            "surface-variant": "#e4e2e4",
+            "outline-variant": "#c1c6d7",
+            "on-surface": "#1b1b1d",
+            "on-surface-variant": "#414755",
+            "error": "#ba1a1a",
+            "error-container": "#ffdad6",
+            "secondary": "#5d5e60",
+            "tertiary": "#5a5c60",
+          },
+          fontFamily: { sans: ["Inter", "sans-serif"] },
+          borderRadius: { "xl": "0.75rem", "2xl": "1rem", "3xl": "1.5rem" },
+        },
+      },
+    };
+  </script>
+  <style>
+    .glass-panel {
+      background: rgba(255,255,255,0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+  </style>
+</head>
+<body class="bg-surface text-on-surface font-sans antialiased min-h-screen flex flex-col">
+
+<!-- Header -->
+<header class="bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm h-16 flex items-center justify-between px-6 sticky top-0 z-30">
+  <h1 class="text-xl font-bold tracking-tight">Undertone Scanner</h1>
+  <div class="flex gap-4 items-center">
+    <span class="material-symbols-outlined text-gray-500 cursor-pointer">settings</span>
+    <span class="material-symbols-outlined text-gray-500 cursor-pointer">account_circle</span>
+  </div>
+</header>
+
+<!-- Tab Navigation -->
+<div class="flex justify-center mt-6 mb-4">
+  <div class="bg-gray-100 p-1 rounded-2xl inline-flex shadow-inner">
+    <button id="tab-upload" class="px-6 py-2 rounded-xl font-medium text-sm bg-white shadow transition" onclick="switchTab('upload')">Upload</button>
+    <button id="tab-live" class="px-6 py-2 rounded-xl font-medium text-sm text-gray-500 hover:text-black transition" onclick="switchTab('live')">Live Camera</button>
+    <button id="tab-bulk" class="px-6 py-2 rounded-xl font-medium text-sm text-gray-500 hover:text-black transition" onclick="switchTab('bulk')">Bulk Upload</button>
+  </div>
+</div>
+
+<!-- Main Content -->
+<main class="flex-1 max-w-7xl mx-auto w-full px-6 pb-16">
+
+  <!-- ========== UPLOAD TAB ========== -->
+  <div id="content-upload" class="tab-content">
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+      <!-- Left: upload + config -->
+      <div class="xl:col-span-5 space-y-6">
+        <div class="glass-panel rounded-3xl p-8 text-center relative border border-dashed border-gray-300">
+          <span class="material-symbols-outlined text-5xl text-gray-400">cloud_upload</span>
+          <h3 class="text-2xl font-semibold mt-3">Drag & Drop Image</h3>
+          <p class="text-gray-500 mt-2">or select a file from your device</p>
+          <input type="file" id="file-input" accept="image/*" class="hidden" />
+          <button onclick="document.getElementById('file-input').click()" class="mt-6 bg-primary text-white rounded-full px-8 py-3 font-medium flex items-center gap-2 mx-auto shadow">
+            <span class="material-symbols-outlined text-xl">image</span> Choose Image
+          </button>
+          <div id="preview-container" class="mt-6 hidden">
+            <img id="preview" class="max-h-64 mx-auto rounded-2xl shadow" alt="preview" />
+          </div>
+        </div>
+
+        <div class="glass-panel rounded-3xl p-6">
+          <h3 class="text-xl font-semibold mb-4">Model & Expected Label</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="text-sm text-gray-500">Model A</label>
+              <select id="model-a" class="w-full mt-1 rounded-xl border-gray-200 bg-gray-50 p-3"></select>
+            </div>
+            <div>
+              <label class="text-sm text-gray-500">Model B</label>
+              <select id="model-b" class="w-full mt-1 rounded-xl border-gray-200 bg-gray-50 p-3"></select>
+            </div>
+            <div>
+              <label class="text-sm text-gray-500">Expected Label</label>
+              <select id="expected-single" class="w-full mt-1 rounded-xl border-gray-200 bg-gray-50 p-3">
+                <option value="">None</option>
+                <option value="cool">Cool</option>
+                <option value="neutral">Neutral</option>
+                <option value="warm">Warm</option>
+              </select>
+            </div>
+          </div>
+          <button id="predict-btn" disabled onclick="predictSingle()" class="w-full mt-6 bg-primary text-white rounded-xl py-4 font-medium flex items-center justify-center gap-2 shadow disabled:opacity-50">
+            <span class="material-symbols-outlined">compare_arrows</span> Predict & Compare
+          </button>
+        </div>
+      </div>
+
+      <!-- Right: comparison results -->
+      <div class="xl:col-span-7">
+        <h2 class="text-3xl font-bold mb-6">Comparison Results</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-white rounded-3xl p-6 shadow-sm border" id="result-card-a">
+            <span class="text-xs font-medium bg-gray-100 px-3 py-1 rounded-full">Model A</span>
+            <div class="text-center py-8">
+              <span id="pred-class-a" class="text-5xl font-bold">—</span>
+              <p id="pred-conf-a" class="text-primary font-semibold mt-2">—</p>
+            </div>
+            <div id="prob-bars-a" class="space-y-3 mt-4"></div>
+          </div>
+          <div class="bg-white rounded-3xl p-6 shadow-sm border" id="result-card-b">
+            <span class="text-xs font-medium bg-gray-100 px-3 py-1 rounded-full">Model B</span>
+            <div class="text-center py-8">
+              <span id="pred-class-b" class="text-5xl font-bold">—</span>
+              <p id="pred-conf-b" class="text-primary font-semibold mt-2">—</p>
+            </div>
+            <div id="prob-bars-b" class="space-y-3 mt-4"></div>
+          </div>
+        </div>
+        <p class="text-gray-400 text-center mt-16" id="placeholder-single">👆 Upload an image to see predictions</p>
+      </div>
+    </div>
+  </div>
+
+    <!-- ========== LIVE CAMERA TAB ========== -->
+  <div id="content-live" class="tab-content hidden">
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      <!-- Kolom kiri: Kamera -->
+      <div class="xl:col-span-8">
+        <div class="relative rounded-2xl overflow-hidden bg-black aspect-video">
+          <video id="video" autoplay playsinline class="w-full h-full object-cover"></video>
+          <canvas id="canvas" class="hidden absolute inset-0 w-full h-full object-cover"></canvas>
+        </div>
+        <div class="flex flex-wrap gap-4 mt-4 items-end">
+          <div>
+            <label class="text-sm text-gray-500 block">Expected Label</label>
+            <select id="expected-live" class="rounded-xl border-gray-200 bg-gray-50 p-2 mt-1">
+              <option value="">None</option>
+              <option value="cool">Cool</option>
+              <option value="neutral">Neutral</option>
+              <option value="warm">Warm</option>
+            </select>
+          </div>
+          <button id="capture-btn" onclick="captureLive()" class="bg-primary text-white rounded-xl px-8 py-3 font-medium flex items-center gap-2 shadow">
+            <span class="material-symbols-outlined">camera</span> Capture & Predict
+          </button>
+        </div>
+      </div>
+
+      <!-- Kolom kanan: Model Selection & Hasil -->
+      <div class="xl:col-span-4">
+        <h2 class="text-2xl font-bold mb-4">Results</h2>
+        <!-- Model selection untuk live -->
+        <div class="flex gap-4 mb-4">
+          <div>
+            <label class="text-xs text-gray-500">Model A</label>
+            <select id="live-model-a" class="w-full rounded-xl border-gray-200 bg-gray-50 p-2 mt-1"></select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Model B</label>
+            <select id="live-model-b" class="w-full rounded-xl border-gray-200 bg-gray-50 p-2 mt-1"></select>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-2xl p-4 shadow-sm border">
+            <span class="text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">Model A</span>
+            <div class="text-center py-4">
+              <span id="live-class-a" class="text-4xl font-bold">—</span>
+              <p id="live-conf-a" class="text-primary font-semibold mt-1">—</p>
+            </div>
+            <div id="live-bars-a" class="space-y-2"></div>
+          </div>
+          <div class="bg-white rounded-2xl p-4 shadow-sm border">
+            <span class="text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">Model B</span>
+            <div class="text-center py-4">
+              <span id="live-class-b" class="text-4xl font-bold">—</span>
+              <p id="live-conf-b" class="text-primary font-semibold mt-1">—</p>
+            </div>
+            <div id="live-bars-b" class="space-y-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== BULK TAB ========== -->
+  <div id="content-bulk" class="tab-content hidden">
+    <section class="mb-8">
+      <h2 class="text-4xl font-bold mb-2">Bulk Upload</h2>
+      <p class="text-gray-500 text-lg max-w-2xl">Process multiple images simultaneously. Compare two models and validate against expected label.</p>
+    </section>
+
+    <div class="glass-panel rounded-3xl p-8 text-center border border-dashed border-gray-300 mb-8">
+      <span class="material-symbols-outlined text-5xl text-gray-400">cloud_upload</span>
+      <h3 class="text-2xl font-semibold mt-3">Drag and drop images here</h3>
+      <p class="text-gray-500 mt-2">Supported formats: JPG, PNG. Up to 50 images.</p>
+      <input type="file" id="bulk-file-input" multiple accept="image/*" class="hidden" />
+      <button onclick="document.getElementById('bulk-file-input').click()" class="mt-6 bg-primary text-white rounded-full px-8 py-3 font-medium flex items-center gap-2 mx-auto shadow">
+        <span class="material-symbols-outlined">image</span> Browse Files
+      </button>
+      <div id="bulk-file-list" class="mt-4 text-sm text-gray-500"></div>
+    </div>
+
+    <div class="flex flex-wrap gap-4 items-end mb-6">
+      <div>
+        <label class="text-sm text-gray-500 block">Model A</label>
+        <select id="bulk-model-a" class="rounded-xl border-gray-200 bg-gray-50 p-2 mt-1"></select>
+      </div>
+      <div>
+        <label class="text-sm text-gray-500 block">Model B</label>
+        <select id="bulk-model-b" class="rounded-xl border-gray-200 bg-gray-50 p-2 mt-1"></select>
+      </div>
+      <div>
+        <label class="text-sm text-gray-500 block">Expected Label</label>
+        <select id="expected-bulk" class="rounded-xl border-gray-200 bg-gray-50 p-2 mt-1">
+          <option value="">None</option>
+          <option value="cool">Cool</option>
+          <option value="neutral">Neutral</option>
+          <option value="warm">Warm</option>
+        </select>
+      </div>
+      <button id="bulk-predict-btn" disabled onclick="predictBulk()" class="bg-primary text-white rounded-xl px-8 py-3 font-medium flex items-center gap-2 shadow disabled:opacity-50">
+        <span class="material-symbols-outlined">compare_arrows</span> Predict All
+      </button>
+    </div>
+
+    <div id="bulk-stats" class="mb-6"></div>
+    <div id="bulk-results" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+  </div>
+</main>
+
+<script>
+  // === GLOBALS ===
+  const CLASS_NAMES = {{ class_names|tojson }};
+  let stream = null;
+  let bulkFiles = [];
+
+  // === INIT ===
+    async function init() {
+    const res = await fetch('/get_models');
+    const models = await res.json();
+    // Isi semua dropdown model (upload, bulk, dan live)
+    ['model-a','model-b','bulk-model-a','bulk-model-b','live-model-a','live-model-b'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (sel) {
+        sel.innerHTML = models.map((m,i) => `<option value="${m}" ${i===0?'selected':''}>${m}</option>`).join('');
+      }
+    });
+  }
+
+  init();
+
+  // === TAB SWITCHING ===
+  function switchTab(tab) {
+    ['upload','live','bulk'].forEach(t => {
+      document.getElementById(`content-${t}`).classList.toggle('hidden', t !== tab);
+      document.getElementById(`tab-${t}`).classList.toggle('bg-white', t === tab);
+      document.getElementById(`tab-${t}`).classList.toggle('shadow', t === tab);
+      document.getElementById(`tab-${t}`).classList.toggle('text-gray-500', t !== tab);
+    });
+    if (tab === 'live') startCamera(); else stopCamera();
+  }
+
+  // === CAMERA ===
+  async function startCamera() {
+    const video = document.getElementById('video');
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream;
+    } catch(e) { alert('Cannot access camera: ' + e.message); }
+  }
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  // === FILE UPLOAD (SINGLE) ===
+  document.getElementById('file-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      document.getElementById('preview').src = ev.target.result;
+      document.getElementById('preview-container').classList.remove('hidden');
+      document.getElementById('predict-btn').disabled = false;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  async function predictSingle() {
+    const file = document.getElementById('file-input').files[0];
+    if (!file) return;
+    const btn = document.getElementById('predict-btn');
+    btn.disabled = true; btn.textContent = 'Predicting...';
+    const expected = document.getElementById('expected-single').value;
+    const modelA = document.getElementById('model-a').value;
+    const modelB = document.getElementById('model-b').value;
+
+    try {
+      const formA = new FormData(); formA.append('file', file); formA.append('model', modelA);
+      const formB = new FormData(); formB.append('file', file); formB.append('model', modelB);
+      const [resA, resB] = await Promise.all([
+        fetch('/predict_upload', {method:'POST',body:formA}).then(r=>r.json()),
+        fetch('/predict_upload', {method:'POST',body:formB}).then(r=>r.json())
+      ]);
+      displayResult(resA, 'a', expected);
+      displayResult(resB, 'b', expected);
+      document.getElementById('placeholder-single').classList.add('hidden');
+    } catch(e) { alert('Prediction failed: '+e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Predict & Compare'; }
+  }
+
+  // === LIVE CAPTURE ===
+    async function captureLive() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video,0,0);
+    const imgData = canvas.toDataURL('image/jpeg');
+    const expected = document.getElementById('expected-live').value;
+    const modelA = document.getElementById('live-model-a').value;   // <-- pakai dropdown live
+    const modelB = document.getElementById('live-model-b').value;
+
+    const btn = document.getElementById('capture-btn');
+    btn.disabled = true; btn.textContent = 'Processing...';
+    try {
+      const body = (m) => JSON.stringify({image:imgData, model:m});
+      const [resA,resB] = await Promise.all([
+        fetch('/predict_frame',{method:'POST',headers:{'Content-Type':'application/json'},body:body(modelA)}).then(r=>r.json()),
+        fetch('/predict_frame',{method:'POST',headers:{'Content-Type':'application/json'},body:body(modelB)}).then(r=>r.json())
+      ]);
+      displayLiveResult(resA,'a',expected);
+      displayLiveResult(resB,'b',expected);
+    } catch(e) { alert('Prediction failed: '+e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Capture & Predict'; }
+  }
+
+  function displayResult(data, panel, expected) {
+    const card = panel === 'a' ? ['pred-class-a','pred-conf-a','prob-bars-a'] : ['pred-class-b','pred-conf-b','prob-bars-b'];
+    document.getElementById(card[0]).textContent = data.class;
+    document.getElementById(card[1]).textContent = (data.confidence*100).toFixed(1)+'% confidence';
+    document.getElementById(card[0]).style.color = (expected && data.class !== expected) ? '#dc2626' : (expected ? '#16a34a' : '#0f172a');
+    renderBars(document.getElementById(card[2]), data.probabilities);
+  }
+
+  function displayLiveResult(data, panel, expected) {
+    const card = panel === 'a' ? ['live-class-a','live-conf-a','live-bars-a'] : ['live-class-b','live-conf-b','live-bars-b'];
+    document.getElementById(card[0]).textContent = data.class;
+    document.getElementById(card[1]).textContent = (data.confidence*100).toFixed(1)+'% confidence';
+    document.getElementById(card[0]).style.color = (expected && data.class !== expected) ? '#dc2626' : (expected ? '#16a34a' : '#0f172a');
+    renderBars(document.getElementById(card[2]), data.probabilities);
+  }
+
+  function renderBars(container, probs) {
+    container.innerHTML = probs.map((p,i) => {
+      const pct = (p*100).toFixed(1);
+      return `<div>
+        <div class="flex justify-between text-sm mb-1"><span>${CLASS_NAMES[i]}</span><span>${pct}%</span></div>
+        <div class="w-full h-2 bg-gray-200 rounded-full"><div class="h-full bg-primary rounded-full" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  }
+
+  // === BULK ===
+  document.getElementById('bulk-file-input').addEventListener('change', e => {
+    bulkFiles = Array.from(e.target.files);
+    document.getElementById('bulk-file-list').textContent = bulkFiles.length ? `${bulkFiles.length} file(s) selected` : '';
+    document.getElementById('bulk-predict-btn').disabled = bulkFiles.length === 0;
+  });
+
+  async function predictBulk() {
+    if (!bulkFiles.length) return;
+    const modelA = document.getElementById('bulk-model-a').value;
+    const modelB = document.getElementById('bulk-model-b').value;
+    const expected = document.getElementById('expected-bulk').value;
+    const btn = document.getElementById('bulk-predict-btn');
+    btn.disabled = true; btn.textContent = 'Predicting...';
+    document.getElementById('bulk-results').innerHTML = '<p class="col-span-full text-center text-gray-400">Processing...</p>';
+
+    try {
+      const formA = new FormData(); bulkFiles.forEach(f => formA.append('files', f)); formA.append('model', modelA);
+      const formB = new FormData(); bulkFiles.forEach(f => formB.append('files', f)); formB.append('model', modelB);
+      const [resA, resB] = await Promise.all([
+        fetch('/predict_bulk', {method:'POST',body:formA}).then(r=>r.json()),
+        fetch('/predict_bulk', {method:'POST',body:formB}).then(r=>r.json())
+      ]);
+      displayBulk(resA, resB, modelA, modelB, expected);
+    } catch(e) { alert('Bulk prediction failed: '+e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Predict All'; }
+  }
+
+  function displayBulk(resA, resB, modelA, modelB, expected) {
+    const container = document.getElementById('bulk-results');
+    const statsDiv = document.getElementById('bulk-stats');
+    // Stats
+    let correctA=0, correctB=0, total=resA.length;
+    if(expected) {
+      resA.forEach(r => { if(r.class === expected) correctA++; });
+      resB.forEach(r => { if(r.class === expected) correctB++; });
+      statsDiv.innerHTML = `<div class="flex gap-8 text-sm font-semibold">
+        <span>Model A (${modelA}): ✅ ${correctA}/${total} (${((correctA/total)*100).toFixed(1)}%)</span>
+        <span>Model B (${modelB}): ✅ ${correctB}/${total} (${((correctB/total)*100).toFixed(1)}%)</span>
+      </div>`;
+    } else statsDiv.innerHTML = '';
+
+    container.innerHTML = resA.map((r, i) => {
+      const rB = resB[i];
+      const file = bulkFiles[i];
+      const thumbUrl = file ? URL.createObjectURL(file) : '';
+      const isWrongA = expected && r.class !== expected;
+      const isWrongB = expected && rB.class !== expected;
+      return `<div class="bg-white rounded-2xl overflow-hidden shadow-sm border ${isWrongA||isWrongB ? 'ring-2 ring-red-300' : ''}">
+        <div class="h-40 overflow-hidden bg-gray-100"><img src="${thumbUrl}" class="w-full h-full object-cover" /></div>
+        <div class="p-4 space-y-2">
+          <p class="text-sm font-medium truncate">${file?.name||'unknown'}</p>
+          <div class="flex justify-between text-sm"><span class="text-gray-500">Model A</span><span class="${isWrongA?'text-red-600':'text-gray-900'} font-semibold">${r.class} (${(r.confidence*100).toFixed(1)}%)</span></div>
+          <div class="flex justify-between text-sm"><span class="text-gray-500">Model B</span><span class="${isWrongB?'text-red-600':'text-gray-900'} font-semibold">${rB.class} (${(rB.confidence*100).toFixed(1)}%)</span></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  window.addEventListener('beforeunload', stopCamera);
+</script>
+</body>
+</html>
