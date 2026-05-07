@@ -105,6 +105,39 @@
                 <option value="warm">Warm</option>
               </select>
             </div>
+            <div class="mt-4 flex items-center gap-2">
+              <input type="checkbox" id="advanced-upload" class="h-4 w-4 text-primary rounded" onchange="toggleAdvancedControls()" />
+              <label for="advanced-upload" class="text-sm text-gray-500">🔬 Advanced Result (Saliency Map)</label>
+            </div>
+            <div id="advanced-controls" class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 hidden">
+              <div>
+                <label class="text-xs text-gray-500">Threshold</label>
+                <input type="range" id="threshold-slider" min="0.1" max="0.9" step="0.05" value="0.3" class="w-full" />
+                <span id="threshold-value" class="text-xs text-gray-400">0.3</span>
+              </div>
+              <div>
+                <label class="text-xs text-gray-500">Colormap</label>
+                <select id="colormap-select" class="w-full rounded-lg border-gray-200 bg-gray-50 p-1 text-sm">
+                  <option value="jet">Jet</option>
+                  <option value="hot">Hot</option>
+                  <option value="inferno">Inferno</option>
+                  <option value="plasma">Plasma</option>
+                  <option value="turbo">Turbo</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-gray-500">ROI Color</label>
+                <select id="roi-color-select" class="w-full rounded-lg border-gray-200 bg-gray-50 p-1 text-sm">
+                  <option value="red">Red</option>
+                  <option value="green">Green</option>
+                  <option value="blue">Blue</option>
+                  <option value="yellow">Yellow</option>
+                  <option value="cyan">Cyan</option>
+                  <option value="orange">Orange</option>
+                  <option value="white">White</option>
+                </select>
+              </div>
+            </div>
           </div>
           <button id="predict-btn" disabled onclick="predictSingle()" class="w-full mt-6 bg-primary text-white rounded-xl py-4 font-medium flex items-center justify-center gap-2 shadow disabled:opacity-50">
             <span class="material-symbols-outlined">compare_arrows</span> Predict & Compare
@@ -138,7 +171,7 @@
     </div>
   </div>
 
-    <!-- ========== LIVE CAMERA TAB ========== -->
+  <!-- ========== LIVE CAMERA TAB ========== -->
   <div id="content-live" class="tab-content hidden">
     <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
       <!-- Kolom kiri: Kamera -->
@@ -157,6 +190,10 @@
               <option value="warm">Warm</option>
             </select>
           </div>
+          <div class="flex items-center gap-2">
+            <input type="checkbox" id="advanced-live" class="h-4 w-4 text-primary rounded" />
+            <label for="advanced-live" class="text-sm text-gray-500">🔬 Advanced</label>
+          </div>
           <button id="capture-btn" onclick="captureLive()" class="bg-primary text-white rounded-xl px-8 py-3 font-medium flex items-center gap-2 shadow">
             <span class="material-symbols-outlined">camera</span> Capture & Predict
           </button>
@@ -166,7 +203,6 @@
       <!-- Kolom kanan: Model Selection & Hasil -->
       <div class="xl:col-span-4">
         <h2 class="text-2xl font-bold mb-4">Results</h2>
-        <!-- Model selection untuk live -->
         <div class="flex gap-4 mb-4">
           <div>
             <label class="text-xs text-gray-500">Model A</label>
@@ -179,7 +215,8 @@
         </div>
 
         <div class="space-y-4">
-          <div class="bg-white rounded-2xl p-4 shadow-sm border">
+          <!-- Kartu Live A -->
+          <div id="live-card-a" class="bg-white rounded-2xl p-4 shadow-sm border">
             <span class="text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">Model A</span>
             <div class="text-center py-4">
               <span id="live-class-a" class="text-4xl font-bold">—</span>
@@ -187,7 +224,8 @@
             </div>
             <div id="live-bars-a" class="space-y-2"></div>
           </div>
-          <div class="bg-white rounded-2xl p-4 shadow-sm border">
+          <!-- Kartu Live B -->
+          <div id="live-card-b" class="bg-white rounded-2xl p-4 shadow-sm border">
             <span class="text-xs font-medium bg-gray-100 px-2 py-1 rounded-full">Model B</span>
             <div class="text-center py-4">
               <span id="live-class-b" class="text-4xl font-bold">—</span>
@@ -200,7 +238,7 @@
     </div>
   </div>
 
-  <!-- ========== BULK TAB ========== -->
+    <!-- ========== BULK TAB ========== -->
   <div id="content-bulk" class="tab-content hidden">
     <section class="mb-8">
       <h2 class="text-4xl font-bold mb-2">Bulk Upload</h2>
@@ -247,16 +285,13 @@
 </main>
 
 <script>
-  // === GLOBALS ===
   const CLASS_NAMES = {{ class_names|tojson }};
   let stream = null;
   let bulkFiles = [];
 
-  // === INIT ===
-    async function init() {
+  async function init() {
     const res = await fetch('/get_models');
     const models = await res.json();
-    // Isi semua dropdown model (upload, bulk, dan live)
     ['model-a','model-b','bulk-model-a','bulk-model-b','live-model-a','live-model-b'].forEach(id => {
       const sel = document.getElementById(id);
       if (sel) {
@@ -264,10 +299,8 @@
       }
     });
   }
-
   init();
 
-  // === TAB SWITCHING ===
   function switchTab(tab) {
     ['upload','live','bulk'].forEach(t => {
       document.getElementById(`content-${t}`).classList.toggle('hidden', t !== tab);
@@ -278,7 +311,6 @@
     if (tab === 'live') startCamera(); else stopCamera();
   }
 
-  // === CAMERA ===
   async function startCamera() {
     const video = document.getElementById('video');
     try {
@@ -290,7 +322,30 @@
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   }
 
-  // === FILE UPLOAD (SINGLE) ===
+  async function fetchSaliency(imageDataUrl, modelName) {
+    const threshold = document.getElementById('threshold-slider').value;
+    const colormap = document.getElementById('colormap-select').value;
+    const roiColor = document.getElementById('roi-color-select').value;
+
+    try {
+      const response = await fetch('/saliency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageDataUrl,
+          model: modelName,
+          threshold: threshold,
+          colormap: colormap,
+          roi_color: roiColor
+        })
+      });
+      return await response.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ----- UPLOAD -----
   document.getElementById('file-input').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -319,52 +374,146 @@
         fetch('/predict_upload', {method:'POST',body:formA}).then(r=>r.json()),
         fetch('/predict_upload', {method:'POST',body:formB}).then(r=>r.json())
       ]);
-      displayResult(resA, 'a', expected);
-      displayResult(resB, 'b', expected);
+      displayUploadResult(resA, 'a', expected, modelA);
+      displayUploadResult(resB, 'b', expected, modelB);
       document.getElementById('placeholder-single').classList.add('hidden');
     } catch(e) { alert('Prediction failed: '+e.message); }
     finally { btn.disabled = false; btn.textContent = 'Predict & Compare'; }
   }
 
-  // === LIVE CAPTURE ===
-    async function captureLive() {
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video,0,0);
-    const imgData = canvas.toDataURL('image/jpeg');
-    const expected = document.getElementById('expected-live').value;
-    const modelA = document.getElementById('live-model-a').value;   // <-- pakai dropdown live
-    const modelB = document.getElementById('live-model-b').value;
-
-    const btn = document.getElementById('capture-btn');
-    btn.disabled = true; btn.textContent = 'Processing...';
-    try {
-      const body = (m) => JSON.stringify({image:imgData, model:m});
-      const [resA,resB] = await Promise.all([
-        fetch('/predict_frame',{method:'POST',headers:{'Content-Type':'application/json'},body:body(modelA)}).then(r=>r.json()),
-        fetch('/predict_frame',{method:'POST',headers:{'Content-Type':'application/json'},body:body(modelB)}).then(r=>r.json())
-      ]);
-      displayLiveResult(resA,'a',expected);
-      displayLiveResult(resB,'b',expected);
-    } catch(e) { alert('Prediction failed: '+e.message); }
-    finally { btn.disabled = false; btn.textContent = 'Capture & Predict'; }
-  }
-
-  function displayResult(data, panel, expected) {
+  function displayUploadResult(data, panel, expected, modelName) {
     const card = panel === 'a' ? ['pred-class-a','pred-conf-a','prob-bars-a'] : ['pred-class-b','pred-conf-b','prob-bars-b'];
     document.getElementById(card[0]).textContent = data.class;
     document.getElementById(card[1]).textContent = (data.confidence*100).toFixed(1)+'% confidence';
     document.getElementById(card[0]).style.color = (expected && data.class !== expected) ? '#dc2626' : (expected ? '#16a34a' : '#0f172a');
     renderBars(document.getElementById(card[2]), data.probabilities);
+
+    const advancedCheck = document.getElementById('advanced-upload');
+    const saliencyDiv = document.getElementById(`saliency-upload-${panel}`) || (() => {
+      const div = document.createElement('div');
+      div.id = `saliency-upload-${panel}`;
+      div.className = 'mt-4';
+      document.getElementById(`result-card-${panel}`).appendChild(div);
+      return div;
+    })();
+
+    if (advancedCheck && advancedCheck.checked) {
+      saliencyDiv.innerHTML = '<p class="text-sm text-gray-400">Generating saliency...</p>';
+      const imgDataUrl = document.getElementById('preview').src;
+      if (imgDataUrl) {
+        fetchSaliency(imgDataUrl, modelName).then(salData => {
+          if (salData && salData.heatmap) {
+              saliencyDiv.innerHTML = `
+                  <div class="space-y-2 mt-2">
+                      <p class="text-xs text-gray-600 italic">${salData.explanation}</p>
+                      <div class="grid grid-cols-2 gap-2">
+                          <div>
+                              <p class="text-xs font-medium text-gray-500 mb-1">ROI (Bounding Box)</p>
+                              <img src="data:image/jpeg;base64,${salData.roi}" class="w-full rounded-lg border-2 border-red-400" alt="ROI" />
+                          </div>
+                          <div>
+                              <p class="text-xs font-medium text-gray-500 mb-1">Saliency Heatmap</p>
+                              <img src="data:image/jpeg;base64,${salData.heatmap}" class="w-full rounded-lg" alt="Saliency" />
+                          </div>
+                      </div>
+                  </div>`;
+          } else {
+              saliencyDiv.innerHTML = '<p class="text-sm text-red-500">Failed to generate saliency map.</p>';
+          }
+      });
+      }
+    } else {
+      saliencyDiv.innerHTML = '';
+    }
   }
 
-  function displayLiveResult(data, panel, expected) {
-    const card = panel === 'a' ? ['live-class-a','live-conf-a','live-bars-a'] : ['live-class-b','live-conf-b','live-bars-b'];
+  // ----- LIVE -----
+  async function captureLive() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const imgData = canvas.toDataURL('image/jpeg');
+    const expected = document.getElementById('expected-live').value;
+    const modelA = document.getElementById('live-model-a').value;
+    const modelB = document.getElementById('live-model-b').value;
+
+    const btn = document.getElementById('capture-btn');
+    btn.disabled = true; btn.textContent = 'Processing...';
+    try {
+      const body = (m) => JSON.stringify({ image: imgData, model: m });
+      const [resA, resB] = await Promise.all([
+        fetch('/predict_frame', { method:'POST', headers:{'Content-Type':'application/json'}, body: body(modelA) }).then(r => r.json()),
+        fetch('/predict_frame', { method:'POST', headers:{'Content-Type':'application/json'}, body: body(modelB) }).then(r => r.json())
+      ]);
+      // ⚠️ PERHATIKAN: parameter ke-4 adalah imgData, ke-5 adalah modelName
+      displayLiveResult(resA, 'a', expected, imgData, modelA);
+      displayLiveResult(resB, 'b', expected, imgData, modelB);
+    } catch(e) {
+      alert('Prediction failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Capture & Predict';
+    }
+  }
+
+  function toggleAdvancedControls() {
+    const advancedCheck = document.getElementById('advanced-upload');
+    const controls = document.getElementById('advanced-controls');
+    controls.classList.toggle('hidden', !advancedCheck.checked);
+  }
+
+  document.getElementById('threshold-slider').addEventListener('input', (e) => {
+    document.getElementById('threshold-value').textContent = e.target.value;
+  });
+
+  function displayLiveResult(data, panel, expected, imageDataUrl, modelName) {
+    // Tampilkan kelas & confidence
+    const card = panel === 'a'
+      ? ['live-class-a','live-conf-a','live-bars-a']
+      : ['live-class-b','live-conf-b','live-bars-b'];
     document.getElementById(card[0]).textContent = data.class;
-    document.getElementById(card[1]).textContent = (data.confidence*100).toFixed(1)+'% confidence';
-    document.getElementById(card[0]).style.color = (expected && data.class !== expected) ? '#dc2626' : (expected ? '#16a34a' : '#0f172a');
+    document.getElementById(card[1]).textContent = (data.confidence * 100).toFixed(1) + '% confidence';
+    document.getElementById(card[0]).style.color =
+      (expected && data.class !== expected) ? '#dc2626' : (expected ? '#16a34a' : '#0f172a');
     renderBars(document.getElementById(card[2]), data.probabilities);
+
+    // ---- Advanced Result ----
+    const advancedCheck = document.getElementById('advanced-live');
+    const saliencyContainerId = `live-saliency-${panel}`;
+    let saliencyDiv = document.getElementById(saliencyContainerId);
+    if (!saliencyDiv) {
+      saliencyDiv = document.createElement('div');
+      saliencyDiv.id = saliencyContainerId;
+      saliencyDiv.className = 'mt-4';
+      document.getElementById(`live-card-${panel}`).appendChild(saliencyDiv);
+    }
+
+    if (advancedCheck && advancedCheck.checked) {
+      saliencyDiv.innerHTML = '<p class="text-sm text-gray-400">Generating saliency...</p>';
+      // ✅ Sekarang imageDataUrl & modelName sudah dikenali
+      fetchSaliency(imageDataUrl, modelName).then(salData => {
+        if (salData && salData.heatmap) {
+          saliencyDiv.innerHTML = `
+            <div class="space-y-2 mt-2">
+              <p class="text-xs text-gray-600 italic">${salData.explanation}</p>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <p class="text-xs font-medium text-gray-500 mb-1">ROI (Bounding Box)</p>
+                  <img src="data:image/jpeg;base64,${salData.roi}" class="w-full rounded-lg border-2 border-red-400" alt="ROI" />
+                </div>
+                <div>
+                  <p class="text-xs font-medium text-gray-500 mb-1">Saliency Heatmap</p>
+                  <img src="data:image/jpeg;base64,${salData.heatmap}" class="w-full rounded-lg" alt="Saliency" />
+                </div>
+              </div>
+            </div>`;
+        } else {
+          saliencyDiv.innerHTML = '<p class="text-sm text-red-500">Failed to generate saliency map.</p>';
+        }
+      });
+    } else {
+      saliencyDiv.innerHTML = '';
+    }
   }
 
   function renderBars(container, probs) {
@@ -377,7 +526,7 @@
     }).join('');
   }
 
-  // === BULK ===
+    // === BULK ===
   document.getElementById('bulk-file-input').addEventListener('change', e => {
     bulkFiles = Array.from(e.target.files);
     document.getElementById('bulk-file-list').textContent = bulkFiles.length ? `${bulkFiles.length} file(s) selected` : '';
@@ -408,7 +557,6 @@
   function displayBulk(resA, resB, modelA, modelB, expected) {
     const container = document.getElementById('bulk-results');
     const statsDiv = document.getElementById('bulk-stats');
-    // Stats
     let correctA=0, correctB=0, total=resA.length;
     if(expected) {
       resA.forEach(r => { if(r.class === expected) correctA++; });
@@ -435,6 +583,7 @@
       </div>`;
     }).join('');
   }
+  
 
   window.addEventListener('beforeunload', stopCamera);
 </script>

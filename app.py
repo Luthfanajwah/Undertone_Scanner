@@ -5,9 +5,10 @@ import torch
 import torch.nn as nn
 from torchvision import transforms, models
 from flask import Flask, render_template, Response, request, jsonify
-from PIL import Image
+from PIL import Image, ImageOps
 import io
 import base64
+import matplotlib.pyplot as plt
 
 # ================= KONFIGURASI =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,16 +24,11 @@ def load_single_model(model_name):
     """
     Load satu model berdasarkan nama file (tanpa .pth).
     Arsitektur otomatis dideteksi dari nama model (case-insensitive).
-    - mengandung 'resnet18' -> ResNet18
-    - mengandung 'resnet50' -> ResNet50
-    - mengandung 'mobilenet' -> MobileNetV2
-    Kalau tidak cocok, akan dicoba sebagai MobileNetV2 dulu, lalu ResNet18.
     """
     path = os.path.join(MODELS_DIR, f"{model_name}.pth")
     if not os.path.exists(path):
         raise FileNotFoundError(f"Model file not found: {path}")
 
-    # Normalisasi: lowercase, tanpa spasi
     key = model_name.replace(' ', '').lower()
 
     if 'resnet18' in key:
@@ -45,7 +41,7 @@ def load_single_model(model_name):
         model = models.mobilenet_v2(weights=None)
         model.classifier[1] = nn.Linear(model.last_channel, len(CLASS_NAMES))
     else:
-        # Fallback: coba satu per satu
+        # Fallback
         try:
             model = models.mobilenet_v2(weights=None)
             model.classifier[1] = nn.Linear(model.last_channel, len(CLASS_NAMES))
@@ -72,16 +68,12 @@ def load_single_model(model_name):
     model.eval()
     return model
 
-
-# Pindai semua model
 def scan_models():
     if not os.path.exists(MODELS_DIR):
         return []
     files = [f[:-4] for f in os.listdir(MODELS_DIR) if f.endswith('.pth')]
     return sorted(files)
 
-
-# Jalankan saat startup
 print("Scanning models...")
 available_models = scan_models()
 if not available_models:
@@ -105,11 +97,9 @@ def preprocess_image(pil_img):
     return preprocess(pil_img).unsqueeze(0).to(DEVICE)
 
 def predict_image(pil_img, model_name=None):
-    """Prediksi menggunakan model tertentu (default jika None)."""
     if model_name is None:
         model_name = default_model
     if model_name not in loaded_models:
-        # fallback
         model_name = default_model
     model = loaded_models[model_name]
     img_tensor = preprocess_image(pil_img)
@@ -178,22 +168,13 @@ def predict_bulk():
         if file.filename == '':
             continue
         try:
-            # Baca bytes agar stream tidak habis
             img_bytes = file.read()
             if len(img_bytes) == 0:
                 results.append({'filename': file.filename, 'error': 'File is empty'})
                 continue
-
-            # Buka gambar dari bytes
             img = Image.open(io.BytesIO(img_bytes))
-
-            # Transpose orientasi EXIF
-            from PIL import ImageOps
             img = ImageOps.exif_transpose(img)
-
-            # Konversi ke RGB
             img = img.convert('RGB')
-
             pred_class, conf, probs = predict_image(img, model_name)
             results.append({
                 'filename': file.filename,
@@ -202,7 +183,6 @@ def predict_bulk():
                 'probabilities': probs
             })
         except Exception as e:
-            # Log error untuk debugging
             print(f"Error processing {file.filename}: {e}")
             results.append({
                 'filename': file.filename,
@@ -210,6 +190,117 @@ def predict_bulk():
             })
 
     return jsonify(results)
+
+# ================= SALIENCY MAP + ROI =================
+def get_roi_bbox(saliency_map, threshold=0.3):
+    blurred = cv2.GaussianBlur(saliency_map, (5, 5), 0)
+    _, binary = cv2.threshold((blurred * 255).astype(np.uint8), int(threshold * 255), 255, cv2.THRESH_BINARY)
+    kernel = np.ones((5, 5), np.uint8)
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    largest = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(largest)
+    if w < 0.05 * saliency_map.shape[1] or h < 0.05 * saliency_map.shape[0]:
+        return None
+    return (x, y, w, h)
+
+def generate_saliency_map(pil_img, model, threshold=0.3, colormap_name='jet', roi_color=(0, 0, 255)):
+    # Preprocess gambar seperti biasa
+    img_tensor = preprocess_image(pil_img).to(DEVICE)
+    img_tensor.requires_grad_()
+
+    # Forward + backward untuk mendapatkan gradien
+    outputs = model(img_tensor)
+    pred_idx = outputs.argmax(dim=1).item()
+    score = outputs[0, pred_idx]
+    score.backward()
+
+    # Ambil gradien, ambil maksimum absolut per channel
+    grad = img_tensor.grad.data.abs()
+    saliency, _ = grad.max(dim=1)
+    saliency = saliency.cpu().numpy()[0]
+
+    # Normalisasi ke 0-1
+    saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-8)
+
+    # Konversi gambar asli ke numpy (0-255)
+    img_np = np.array(pil_img.resize(IMG_SIZE))
+
+    # Buat heatmap berwarna sesuai colormap_name
+    cmap = plt.get_cmap(colormap_name)
+    heatmap = cmap(saliency)[..., :3] * 255
+    heatmap = heatmap.astype(np.uint8)
+
+    # Overlay dengan bobot 0.5
+    overlay = cv2.addWeighted(img_np, 0.5, heatmap, 0.5, 0)
+
+    # ROI bounding box dengan threshold yang bisa diatur
+    bbox = get_roi_bbox(saliency, threshold)
+    roi_img = img_np.copy()
+    roi_img_bgr = cv2.cvtColor(roi_img, cv2.COLOR_RGB2BGR)  # konversi ke BGR untuk OpenCV
+    if bbox:
+        x, y, w, h = bbox
+        cv2.rectangle(roi_img_bgr, (x, y), (x+w, y+h), roi_color, 2)
+        cv2.putText(roi_img_bgr, "Focus", (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, roi_color, 2)
+    roi_img = cv2.cvtColor(roi_img_bgr, cv2.COLOR_BGR2RGB)  # kembalikan ke RGB
+    explanation = ""
+    if bbox:
+        explanation = f"Model berfokus pada area {w}x{h} piksel (threshold={threshold:.2f})."
+    else:
+        explanation = "Model tidak memiliki fokus yang kuat (coba turunkan threshold)."
+
+    return overlay, roi_img, pred_idx, torch.softmax(outputs, dim=1).cpu().detach().numpy()[0], explanation
+
+@app.route('/saliency', methods=['POST'])
+def saliency():
+    data = request.get_json()
+    model_name = data.get('model', default_model)
+    img_data = data['image'].split(',')[1]
+    img_bytes = base64.b64decode(img_data)
+    img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+
+    # Parameter baru
+    threshold = float(data.get('threshold', 0.3))
+    colormap_name = data.get('colormap', 'jet')
+    roi_color_str = data.get('roi_color', 'red')
+
+    # Konversi nama warna ke BGR
+    color_map = {
+        'red':    (0, 0, 255),   # BGR: Blue=0, Green=0, Red=255
+        'green':  (0, 255, 0),   # BGR: Blue=0, Green=255, Red=0
+        'blue':   (255, 0, 0),   # BGR: Blue=255, Green=0, Red=0
+        'yellow': (0, 255, 255), # BGR: Blue=0, Green=255, Red=255
+        'cyan':   (255, 255, 0), # BGR: Blue=255, Green=255, Red=0
+        'orange': (0, 165, 255), # BGR: Blue=0, Green=165, Red=255
+        'white':  (255, 255, 255),
+    }
+    roi_color = color_map.get(roi_color_str, (0, 0, 255))  # default merah
+
+    if model_name not in loaded_models:
+        model_name = default_model
+    model = loaded_models[model_name]
+
+    try:
+        overlay, roi_img, pred_idx, probs, explanation = generate_saliency_map(
+            img, model, threshold=threshold, colormap_name=colormap_name, roi_color=roi_color
+        )
+        _, buffer_overlay = cv2.imencode('.jpg', cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+        heatmap_b64 = base64.b64encode(buffer_overlay).decode('utf-8')
+        _, buffer_roi = cv2.imencode('.jpg', cv2.cvtColor(roi_img, cv2.COLOR_RGB2BGR))
+        roi_b64 = base64.b64encode(buffer_roi).decode('utf-8')
+
+        return jsonify({
+            'heatmap': heatmap_b64,
+            'roi': roi_b64,
+            'explanation': explanation,
+            'class': CLASS_NAMES[pred_idx],
+            'confidence': float(probs[pred_idx]),
+            'probabilities': probs.tolist()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ================= STREAMING (Opsional) =================
 def generate_frames():
